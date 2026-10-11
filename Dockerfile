@@ -36,6 +36,20 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Internal shared billing package - private repo, installed via a Render
+# Secret File (not an ARG/ENV) so the token never lands in an image layer.
+# BuildKit's --mount=type=secret only exists for the duration of this one
+# RUN instruction; `docker history` on the built image shows nothing.
+#
+# Setup required in the Render dashboard (one-time, per environment):
+#   Service -> Environment -> Secret Files -> Add Secret File
+#     Filename: dodman_billing_pat
+#     Contents: the raw GitHub fine-grained PAT (read-only, scoped to
+#               just the dodman-billing repo) - no KEY=VALUE, just the token
+RUN --mount=type=secret,id=dodman_billing_pat,dst=/run/secrets/dodman_billing_pat \
+    pip install --prefix=/install --no-cache-dir \
+    "git+https://$(cat /run/secrets/dodman_billing_pat)@github.com/dodman-group-hq/dodman-billing.git@main"
+
 # Copy project files to the container
 COPY . .
 

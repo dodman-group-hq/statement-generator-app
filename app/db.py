@@ -23,30 +23,47 @@ _pool: asyncpg.Pool | None = None
 
 
 # ---------------------------------------------------------------------------
-# Plan defaults - the single source of truth for what a plan is allowed to do.
-# Used by BOTH the CLI (scripts/create_api_key.py) and self-serve signup
-# (app/routes/accounts.py), so the two can never drift apart again.
+# Plans - the single source of truth for what each plan is allowed to do.
+# Used by the CLI (scripts/create_api_key.py), self-serve signup, the billing
+# entitlement hooks (app/billing.py) and the dashboard's plan descriptions, so
+# a limit is changed in exactly one place.
 #
-#   free  -> 5 jobs/month, 25 rows/job, password protection OFF
-#   other -> unlimited jobs and rows, password protection ON
+# !! The starter numbers below are PLACEHOLDERS - set them to your real
+# !! pricing before launch. None means unlimited.
 #
-# These are starting points: callers can still override any single value.
+# Any other plan name (e.g. "internal", "enterprise", or a CLI-issued "paid")
+# is treated as unlimited, so hand-issued custom plans keep working.
 # ---------------------------------------------------------------------------
-FREE_PLAN_DEFAULTS = {
-    "monthly_job_limit": 5,
-    "max_rows_per_job": 25,
-    "password_protection_allowed": False,
+PLAN_DEFAULTS = {
+    "free":    {"monthly_job_limit": 5,    "max_rows_per_job": 25,   "password_protection_allowed": False},
+    "starter": {"monthly_job_limit": 100,  "max_rows_per_job": 500,  "password_protection_allowed": True},
+    "pro":     {"monthly_job_limit": None, "max_rows_per_job": None, "password_protection_allowed": True},
 }
-OTHER_PLAN_DEFAULTS = {
-    "monthly_job_limit": None,
-    "max_rows_per_job": None,
-    "password_protection_allowed": True,
-}
+UNLIMITED_PLAN_DEFAULTS = {"monthly_job_limit": None, "max_rows_per_job": None, "password_protection_allowed": True}
+
+PLAN_LABELS = {"free": "Free", "starter": "Starter", "pro": "Pro"}
 
 
 def plan_defaults(plan: str) -> dict:
     """Returns a fresh copy, so callers can't accidentally mutate the shared defaults."""
-    return dict(FREE_PLAN_DEFAULTS if plan == "free" else OTHER_PLAN_DEFAULTS)
+    return dict(PLAN_DEFAULTS.get(plan, UNLIMITED_PLAN_DEFAULTS))
+
+
+def plan_label(plan: str) -> str:
+    return PLAN_LABELS.get(plan, plan.title())
+
+
+def describe_plan(plan: str) -> str:
+    """One-line, human-readable summary of a plan's limits (for the dashboard)."""
+    limits = plan_defaults(plan)
+    jobs = limits["monthly_job_limit"]
+    rows = limits["max_rows_per_job"]
+    parts = [
+        f"{jobs:,} jobs a month" if jobs is not None else "Unlimited jobs",
+        f"up to {rows:,} rows per job" if rows is not None else "unlimited rows per job",
+        "password-protected PDFs" if limits["password_protection_allowed"] else "no password protection",
+    ]
+    return " · ".join(parts)
 
 
 def _dsn() -> str:
@@ -190,8 +207,9 @@ def hash_key(raw_key: str) -> str:
 
 
 async def get_client_by_key(raw_key: str) -> dict | None:
-    """Returns a dict {id, label, plan, monthly_job_limit, max_rows_per_job,
-    password_protection_allowed} or None.
+    """Returns a dict {id, user_id, label, plan, monthly_job_limit,
+    max_rows_per_job, password_protection_allowed} or None. user_id is None
+    for CLI-issued keys that have no login account.
 
     Not RLS-scoped: this is the auth bootstrap itself, run before we know
     who's calling. It only ever matches the one row whose key_hash equals
@@ -200,7 +218,7 @@ async def get_client_by_key(raw_key: str) -> dict | None:
     """
     async with get_connection() as conn:
         row = await conn.fetchrow(
-            "SELECT id, label, plan, monthly_job_limit, max_rows_per_job, password_protection_allowed "
+            "SELECT id, user_id, label, plan, monthly_job_limit, max_rows_per_job, password_protection_allowed "
             "FROM statement_api_clients WHERE key_hash = $1 AND is_active = TRUE",
             hash_key(raw_key),
         )
@@ -214,6 +232,35 @@ async def count_jobs_this_month(client_id: int) -> int:
             "WHERE client_id = $1 AND created_at >= date_trunc('month', now())",
             client_id,
         )
+
+
+async def get_active_plan_for_user(user_id: str, product: str = "statement-generator") -> str:
+    """The plan a user is entitled to RIGHT NOW, according to billing.
+
+    Used when issuing a new API key, so a paying customer's new keys start
+    with paid limits instead of free ones. "non-renewing" still counts: the
+    customer has cancelled but paid through the end of the period.
+
+    Falls back to 'free' on ANY problem (no subscription, billing tables not
+    created yet, database hiccup) - this must never be the reason a user
+    can't create a key, and failing safe means free limits, not paid ones.
+    """
+    try:
+        async with get_connection() as conn:
+            # subscriptions is protected by Row-Level Security scoped to a
+            # product, so the session must say which product it is asking as.
+            await conn.execute("SELECT set_config('app.current_product', $1, true)", product)
+            row = await conn.fetchrow(
+                "SELECT plan, status FROM subscriptions WHERE user_id = $1 AND product = $2",
+                user_id, product,
+            )
+    except Exception as e:
+        logger.warning(f"Could not read subscription for user {user_id}; treating as free: {e}")
+        return "free"
+
+    if row and row["status"] in ("active", "non-renewing") and row["plan"]:
+        return row["plan"]
+    return "free"
 
 
 async def create_job(temp_id: str, client_id: int, row_count: int | None = None) -> None:

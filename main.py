@@ -11,11 +11,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.db import init_pool, close_pool, init_schema
 from app.observability import init_error_tracking
+from app.billing import setup_billing
 from app.routes.generate_statements import router as statement_generator_router, templates as sg_templates, STATIC_DIR
 from app.routes.accounts import router as accounts_router
 
@@ -30,17 +30,29 @@ MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_error_tracking(app_env=os.getenv('APP_ENV', 'production'))
+
+    database_ready = False
     try:
         await init_pool()
         # Don't crash the whole app if the database happens to be unreachable
         # at boot (e.g. Neon is still waking from autosuspend) - requests
         # will just get a clear 503 from the auth layer until it's reachable.
         await init_schema()
+        database_ready = True
     except Exception as e:
         logger.error(f"Could not initialize database at startup: {e}")
 
+    # Billing needs a live pool (its engine is built around it), so it can
+    # only start once the database is up. It mounts /billing onto the app
+    # here, at startup - which is why the 404 page below is an exception
+    # handler and not a catch-all route: a catch-all registered at import
+    # time would sit BEFORE these late-mounted routes and swallow them.
+    billing_task = await setup_billing(app) if database_ready else None
+
     yield
 
+    if billing_task is not None:
+        billing_task.cancel()
     await close_pool()
 
 
@@ -95,7 +107,15 @@ async def limit_upload_size(request: Request, call_next):
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Keep the same {"message": ...} response shape the Flask version used,
     for any client code that already expects it - HTTPException(detail=...)
-    becomes {"message": detail} instead of FastAPI's default {"detail": ...}."""
+    becomes {"message": detail} instead of FastAPI's default {"detail": ...}.
+
+    Also renders the friendly 404 page for URLs that match no route at all.
+    Starlette signals that case with the stock detail "Not Found"; a route
+    that deliberately raises its own 404 (e.g. "Invalid or expired download
+    ID.") has a custom detail and still gets JSON."""
+    if exc.status_code == 404 and exc.detail == "Not Found":
+        return landing_templates.TemplateResponse(request, "404.html", status_code=404)
+
     detail = exc.detail
     if isinstance(detail, dict):
         return JSONResponse(status_code=exc.status_code, content=detail)
@@ -109,8 +129,3 @@ app.include_router(accounts_router, prefix="/accounts")
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: Request):
     return landing_templates.TemplateResponse(request, "landing_page.html")
-
-
-@app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
-async def not_found(request: Request, full_path: str):
-    return landing_templates.TemplateResponse(request, "404.html", status_code=404)

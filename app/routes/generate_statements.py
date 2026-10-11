@@ -38,7 +38,7 @@ from docxtpl import DocxTemplate
 from PyPDF2 import PdfWriter, PdfReader
 from werkzeug.utils import secure_filename
 
-from fastapi import APIRouter, Request, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Request, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -46,6 +46,7 @@ from pydantic import BaseModel
 from app.auth import require_api_key
 from app.db import create_job, update_job_status, count_jobs_this_month, get_connection
 from app.observability import capture_job_failure, capture_service_error
+from app.notifications import notify_job_limit_for_client
 
 logger = logging.getLogger(__name__)
 
@@ -866,6 +867,7 @@ async def process_statement(
     template_file: UploadFile = File(..., description="Word template (.doc/.docx) with {{ field }} placeholders"),
     data_file: UploadFile = File(..., description="Spreadsheet (.xls/.xlsx) with one row per statement"),
     password_protection: bool = Form(False, description="Password-protect each PDF with that row's own ID"),
+    background_tasks: BackgroundTasks = None,
     client: dict = Depends(require_api_key),
 ):
     """Kicks off statement generation in the background and returns
@@ -932,6 +934,10 @@ async def process_statement(
         shutil.rmtree(output_folder, ignore_errors=True)
         capture_service_error(e, where="process_statement.create_job", client_id=client['id'], temp_id=temp_id)
         raise HTTPException(status_code=503, detail="Service temporarily unavailable. Please try again shortly.")
+
+    if client['monthly_job_limit'] is not None:
+        # `used` was counted BEFORE this job was recorded, so this job is used + 1.
+        background_tasks.add_task(notify_job_limit_for_client, client, used + 1)
 
     TEMP_DOWNLOADS[temp_id] = {'folder': output_folder, 'expiry': expiry_time, 'owner': client['id']}
     set_progress(temp_id, "processing", "Queued...", 0)

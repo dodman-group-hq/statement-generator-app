@@ -116,6 +116,13 @@
     <ul>
       <li><strong>Account information:</strong> your email address and a one-way (bcrypt) hash of your password -
         never the password itself. For this data we act as the data controller.</li>
+      <li><strong>Service emails:</strong> we use your email address to send messages you need in order to use the
+        Service - a welcome message, a notice when a new API key is created on your account, notices when you're
+        approaching or have reached your plan's monthly limit, password reset links, and billing receipts. We don't
+        send marketing email.</li>
+      <li><strong>Subscription and payment records:</strong> if you subscribe to a paid plan, we keep your plan,
+        subscription status, billing period and Paystack's transaction and invoice references. Your card or mobile
+        money details are entered with Paystack and are never seen or stored by us.</li>
       <li><strong>API keys:</strong> a label you give each key and a one-way hash of the key. We never store a key
         in plain text, so we can verify it without being able to see it.</li>
       <li><strong>Files you upload:</strong> the Word template and spreadsheet you submit for a given job, and the
@@ -154,7 +161,10 @@
     <p>
       We don't sell or share your data with third parties for marketing. The only parties with any access are
       infrastructure providers that host the Service (currently Render for compute and Neon for the database), who
-      process data solely to provide that hosting. If we turn on error tracking, error reports may be sent to our
+      process data solely to provide that hosting. Two further providers handle limited data to deliver specific
+      features: Resend sends our service emails (it receives your email address and the message), and Paystack
+      processes subscription payments (it receives your email address and payment details, under its own privacy
+      policy). If we turn on error tracking, error reports may be sent to our
       error-tracking provider (currently Sentry); they identify the failing job and account label, not file contents.
     </p>
 

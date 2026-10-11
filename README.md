@@ -35,6 +35,8 @@ Copy `.env.example` to `.env` and fill it in.
 | `DATABASE_URL` | Yes | - | Postgres connection string (keep `sslmode=require` for Neon) |
 | `SESSION_SECRET_KEY` | Yes in production | random per process in development | Signs login session cookies. The app **refuses to start** in production without it. Use the same value as Vett. |
 | `APP_ENV` | No | `production` | `production` makes `SESSION_SECRET_KEY` mandatory and marks the session cookie `Secure`. Use `development` locally. Also tags Sentry events. |
+| `APP_BASE_URL` | For billing / email links | unset | Public URL of the app; used in checkout callbacks and email buttons |
+| `PAYSTACK_*`, `RESEND_*` | No | unset | Billing and email - see `.env.example` |
 | `MAX_UPLOAD_MB` | No | `25` | Maximum upload size; larger requests get a 413 |
 | `SENTRY_DSN` | No | unset | Enables Sentry. Leave unset to run without it. |
 | `MAX_CONCURRENT_JOBS` | No | `3` | Statement jobs running at once |
@@ -93,14 +95,20 @@ python scripts/create_api_key.py "Acme Corp" --plan paid --limit 500 --max-rows 
 
 ### Plans and limits
 
-Defaults live in `app/db.py` (`plan_defaults`) and are shared by the CLI and self-serve signup:
+Plans mirror Vett's structure. Limits live in one place, `PLAN_DEFAULTS` in `app/db.py`, and are used by the CLI, signup, billing and the dashboard's plan descriptions. **The starter numbers are placeholders - set your real pricing there.**
 
-| Plan | Jobs / month | Rows / job | Password protection |
-|---|---|---|---|
-| `free` | 5 | 25 | Not allowed |
-| anything else (`paid`, `internal`, ...) | Unlimited | Unlimited | Allowed |
+| Plan | Jobs / month | Rows / job | Password protection | How you get it |
+|---|---|---|---|---|
+| `free` | 5 | 25 | No | Default on signup |
+| `starter` | 100 | 500 | Yes | Paystack subscription |
+| `pro` | Unlimited | Unlimited | Yes | Paystack subscription |
+| anything else (`internal`, `enterprise`, ...) | Unlimited | Unlimited | Yes | Issued by CLI |
 
-The CLI can override any value per client with `--limit`, `--max-rows`, `--allow-password-protection` or `--no-password-protection`.
+The CLI can override any value per client with `--limit`, `--max-rows`, `--allow-password-protection` or `--no-password-protection`. Cancelling a subscription drops the user's keys to free limits; keys are never deactivated by billing.
+
+### Billing and email
+
+Billing (Paystack, via the shared `dodman-billing` package) and email (Resend) are optional: with their environment variables unset the app runs normally, billing routes are absent, and emails are only logged. See `.env.example`. Emails sent: welcome, new API key created, approaching / reaching the monthly job limit, and (through billing) receipts and subscription notices. All are transactional; there is no marketing email.
 
 ## Preparing your files
 
