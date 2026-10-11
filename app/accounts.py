@@ -33,18 +33,38 @@ import bcrypt
 
 logger = logging.getLogger(__name__)
 
-# Falls back to a random key if unset - fine for a single always-running
-# process, but means every restart invalidates all sessions AND makes
-# cross-product SSO impossible (Vett and Statement Generator would each
-# generate their own random key, never matching). Set this explicitly in
-# both products' environments, to the SAME value, before relying on it.
-SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY", secrets.token_hex(32))
-if not os.getenv("SESSION_SECRET_KEY"):
+
+def _load_session_secret() -> str:
+    """SESSION_SECRET_KEY is REQUIRED in production.
+
+    A random per-process fallback is fine for local development, but in
+    production it silently logs every user out on every deploy/restart and
+    makes cross-product SSO with Vett impossible (each product would
+    generate its own random key, never matching). Rather than warn and
+    carry on, refuse to start - a missing secret is a deployment mistake
+    that should be loud, not a runtime surprise.
+
+    Set it to the SAME value Vett uses.
+    """
+    secret = os.getenv("SESSION_SECRET_KEY")
+    if secret:
+        return secret
+
+    if os.getenv("APP_ENV", "production") == "production":
+        raise RuntimeError(
+            "SESSION_SECRET_KEY is not set. It is required when APP_ENV=production "
+            "(the default). Set it to the same value Vett uses, or set APP_ENV=development "
+            "for local work."
+        )
+
     logger.warning(
-        "SESSION_SECRET_KEY is not set - using a random key for this process only. "
-        "Sessions will not survive a restart, and cross-product SSO with Vett requires "
-        "this to be set to the SAME value Vett uses."
+        "SESSION_SECRET_KEY is not set - using a random key for this process only "
+        "(allowed because APP_ENV is not 'production'). Sessions will not survive a restart."
     )
+    return secrets.token_hex(32)
+
+
+SESSION_SECRET_KEY = _load_session_secret()
 
 # bcrypt has a hard 72-byte input limit (silently truncates or raises,
 # depending on the binding) - truncate deliberately and consistently here

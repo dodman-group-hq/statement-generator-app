@@ -4,7 +4,8 @@ Issue a new Statement Generator API key.
 The raw key is only ever printed here, once - only its hash is stored in the
 database, so if it's lost the only fix is issuing a new one for that client.
 
-Plan defaults (used whenever the matching flag is omitted):
+Plan defaults (used whenever the matching flag is omitted) live in
+app/db.py (plan_defaults) so this script and self-serve signup always agree:
     free  -> monthly_job_limit=5,   max_rows_per_job=25,  password protection OFF
     other -> monthly_job_limit=None (unlimited), max_rows_per_job=None (unlimited), password protection ON
 
@@ -26,18 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from app.db import init_pool, close_pool, init_schema, create_api_client  # noqa: E402
-
-FREE_DEFAULTS = {
-    "monthly_job_limit": 5,
-    "max_rows_per_job": 25,
-    "password_protection_allowed": False,
-}
-OTHER_DEFAULTS = {
-    "monthly_job_limit": None,
-    "max_rows_per_job": None,
-    "password_protection_allowed": True,
-}
+from app.db import init_pool, close_pool, init_schema, create_api_client, plan_defaults  # noqa: E402
 
 
 async def main():
@@ -55,7 +45,7 @@ async def main():
 
     args = parser.parse_args()
 
-    defaults = FREE_DEFAULTS if args.plan == "free" else OTHER_DEFAULTS
+    defaults = plan_defaults(args.plan)
     monthly_job_limit = args.limit if args.limit is not None else defaults["monthly_job_limit"]
     max_rows_per_job = args.max_rows if args.max_rows is not None else defaults["max_rows_per_job"]
     password_protection_allowed = (

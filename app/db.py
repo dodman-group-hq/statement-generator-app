@@ -22,6 +22,33 @@ logger = logging.getLogger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
+# ---------------------------------------------------------------------------
+# Plan defaults - the single source of truth for what a plan is allowed to do.
+# Used by BOTH the CLI (scripts/create_api_key.py) and self-serve signup
+# (app/routes/accounts.py), so the two can never drift apart again.
+#
+#   free  -> 5 jobs/month, 25 rows/job, password protection OFF
+#   other -> unlimited jobs and rows, password protection ON
+#
+# These are starting points: callers can still override any single value.
+# ---------------------------------------------------------------------------
+FREE_PLAN_DEFAULTS = {
+    "monthly_job_limit": 5,
+    "max_rows_per_job": 25,
+    "password_protection_allowed": False,
+}
+OTHER_PLAN_DEFAULTS = {
+    "monthly_job_limit": None,
+    "max_rows_per_job": None,
+    "password_protection_allowed": True,
+}
+
+
+def plan_defaults(plan: str) -> dict:
+    """Returns a fresh copy, so callers can't accidentally mutate the shared defaults."""
+    return dict(FREE_PLAN_DEFAULTS if plan == "free" else OTHER_PLAN_DEFAULTS)
+
+
 def _dsn() -> str:
     dsn = os.getenv('DATABASE_URL')
     if not dsn:
@@ -214,6 +241,11 @@ async def create_api_client(label: str, plan: str = 'free', monthly_job_limit: i
                              user_id: str | None = None) -> str:
     """Creates a new client and returns the RAW api key.
 
+    NOTE: this function stores exactly the limits it is given - it does NOT
+    apply plan defaults on its own (None means "unlimited"). Callers should
+    unpack plan_defaults(plan) into it, as both scripts/create_api_key.py
+    and the self-serve dashboard do.
+
     The raw key is only ever returned here, at creation time - only its hash
     is stored. If it's lost, the only fix is issuing a new key.
 
@@ -237,7 +269,8 @@ async def create_api_client(label: str, plan: str = 'free', monthly_job_limit: i
 # ---------------------------------------------------------------------------
 
 async def create_user(email: str, password_hash: str) -> str:
-    """Returns the new user's id. Raises on duplicate email (unique constraint)."""
+    """Returns the new user's id. Raises asyncpg.UniqueViolationError on a
+    duplicate email - callers should catch that specifically."""
     async with get_connection() as conn:
         row = await conn.fetchrow(
             "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id",
@@ -272,4 +305,3 @@ async def list_api_clients_for_user(user_id: str) -> list[dict]:
             user_id,
         )
         return [dict(r) for r in rows]
-

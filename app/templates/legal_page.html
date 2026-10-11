@@ -45,26 +45,27 @@
 <div class="wrap legal-body">
   {% if active == 'terms' %}
 
-    <!-- <div class="note">
-      This is a starting draft, not legal advice, and hasn't been reviewed by a lawyer. Before relying on it -
-      especially the sections on data handling and liability - have it reviewed by counsel familiar with Kenya's
-      Data Protection Act, 2019 and any other jurisdictions your clients are in.
-    </div> -->
+    <!-- Draft text, not legal advice. Have it reviewed by counsel familiar with
+         Kenya's Data Protection Act, 2019 and the GDPR before relying on it. -->
 
     <h2>1. What this service is</h2>
     <p>
-      Statement Generator ("the Service") lets an account holder ("you", "the account") upload a Word template and
+      Statement Generator ("the Service") lets an account holder ("you") upload a Word template and
       a spreadsheet of data, and receive back one personalized PDF per row - optionally password-protected with
-      that row's own ID. The Service is provided by Dodman Digital, a subsidiary of Dodman Group ("we", "us").
+      that row's own ID. The Service is provided by Dodman Group ("we", "us").
     </p>
 
     <h2>2. Accounts and API keys</h2>
     <ul>
-      <li>Access requires an API key issued by us. You're responsible for keeping your key confidential - anyone
-        with it can act as your account, including uploading files and downloading results.</li>
-      <li>If you believe your key has been exposed, contact us and we'll revoke it and issue a new one.</li>
-      <li>We may set limits on your account (jobs per month, rows per job, and which features - such as password
-        protection - are available) based on your plan. We may change these limits or suspend an account that
+      <li>You create an account with an email address and password. You're responsible for keeping your password
+        confidential and for everything done through your account.</li>
+      <li>From your dashboard you can create API keys. Each key is shown once, when it's created - we store only a
+        one-way hash and can't show it again. Anyone with a key can act as your account, including uploading files
+        and downloading results, so keep it confidential.</li>
+      <li>If you believe a key or your password has been exposed, contact us and we'll help you revoke the key or
+        secure the account.</li>
+      <li>Accounts are subject to limits (jobs per month, rows per job, and which features - such as password
+        protection - are available) based on your plan. We may change these limits, or suspend an account that
         materially exceeds fair use of the Service.</li>
     </ul>
 
@@ -82,15 +83,17 @@
     <h2>4. Availability and liability</h2>
     <p>
       The Service is provided "as is." We aim for it to be reliably available but don't guarantee uninterrupted
-      service. To the fullest extent permitted by law, we aren't liable for indirect, incidental, or consequential
-      damages arising from your use of the Service. Nothing in these terms limits liability where the law doesn't
-      allow it to be limited.
+      service, and generated PDFs may differ in layout from how your Word template looks in Microsoft Word -
+      please check output before sending it to your recipients. To the fullest extent permitted by law, we aren't
+      liable for indirect, incidental, or consequential damages arising from your use of the Service. Nothing in
+      these terms limits liability where the law doesn't allow it to be limited.
     </p>
 
     <h2>5. Termination</h2>
     <p>
-      Either side can stop using/providing the Service at any time. We may suspend or revoke a key immediately if
-      we reasonably believe it's being used to violate these terms, applicable law, or to process data unlawfully.
+      Either side can stop using/providing the Service at any time. We may suspend an account or revoke a key
+      immediately if we reasonably believe it's being used to violate these terms, applicable law, or to process
+      data unlawfully. You can ask us to delete your account at any time (see the Privacy Policy).
     </p>
 
     <h2>6. Changes</h2>
@@ -100,26 +103,32 @@
     </p>
 
     <h2>7. Contact</h2>
-    <p>Questions about these terms: <a href="mailto:hello@dodmangroup.com">hello@dodmangroup.com</a> (update to your real contact address).</p>
+    <p>Questions about these terms: <a href="mailto:inquiries@dodman.group">inquiries@dodman.group</a></p>
 
   {% else %}
 
-    <!-- <div class="note">
-      This is a starting draft, not legal advice, and hasn't been reviewed by a lawyer. Kenya's Data Protection Act,
-      2019 requires data controllers and processors to register with the Office of the Data Protection Commissioner
-      (ODPC) - confirm your registration status and obligations with the ODPC or counsel before relying on this
-      page, particularly if you or your clients operate outside Kenya too.
-    </div> -->
+    <!-- Draft text, not legal advice. Kenya's Data Protection Act, 2019 requires data controllers and
+         processors to register with the Office of the Data Protection Commissioner (ODPC) - confirm your
+         registration status and obligations, and GDPR obligations for EU users, with counsel before relying
+         on this page. -->
 
     <h2>1. What we collect</h2>
     <ul>
-      <li><strong>Account information:</strong> a label for your account and a hashed copy of your API key. We
-        never store your key in plain text - only a one-way hash, so we can verify it without being able to see it.</li>
+      <li><strong>Account information:</strong> your email address and a one-way (bcrypt) hash of your password -
+        never the password itself. For this data we act as the data controller.</li>
+      <li><strong>API keys:</strong> a label you give each key and a one-way hash of the key. We never store a key
+        in plain text, so we can verify it without being able to see it.</li>
       <li><strong>Files you upload:</strong> the Word template and spreadsheet you submit for a given job, and the
         PDF statements generated from them. These may contain personal data about the people named in your
-        spreadsheet (names, ID numbers, and whatever else your template includes).</li>
+        spreadsheet (names, ID numbers, and whatever else your template includes). For this data we act as a
+        processor on your behalf.</li>
       <li><strong>Job metadata:</strong> when a job ran, how many rows it processed, and whether it succeeded - used
         for enforcing plan limits and for our own troubleshooting. This does not include the content of your files.</li>
+      <li><strong>Session cookie:</strong> when you log in we set one strictly necessary cookie that keeps you signed
+        in (up to 7 days). It isn't used for advertising or tracking.</li>
+      <li><strong>In your browser:</strong> if you use the generator page, your API key is remembered in your own
+        browser's local storage so you don't have to retype it. It's sent only to this service, and you can clear
+        it by clearing your browser's site data.</li>
     </ul>
 
     <h2>2. How long we keep it</h2>
@@ -130,6 +139,7 @@
         they're automatically and permanently deleted.</li>
       <li>Job metadata (row counts, timestamps, pass/fail status - not file content) is retained for usage
         tracking and billing history.</li>
+      <li>Account information and API key records are kept until you ask us to delete your account.</li>
     </ul>
 
     <h2>3. Where it's processed and stored</h2>
@@ -144,32 +154,35 @@
     <p>
       We don't sell or share your data with third parties for marketing. The only parties with any access are
       infrastructure providers that host the Service (currently Render for compute and Neon for the database), who
-      process data solely to provide that hosting.
+      process data solely to provide that hosting. If we turn on error tracking, error reports may be sent to our
+      error-tracking provider (currently Sentry); they identify the failing job and account label, not file contents.
     </p>
 
     <h2>5. Your rights</h2>
     <p>
-      Depending on where you or your data subjects are located, you may have rights to access, correct, or request
+      Depending on where you or your data subjects are located (including under Kenya's Data Protection Act, 2019
+      and, for people in the European Economic Area, the GDPR), you may have rights to access, correct, or request
       deletion of personal data, and to object to or restrict certain processing. Given our short retention window
-      for files, most requests are already satisfied automatically - contact us if you need something specific
-      (for example, deleting job metadata early).
+      for files, most requests are already satisfied automatically. To access, correct, or delete your account
+      information, or to have job metadata removed early, email
+      <a href="mailto:inquiries@dodman.group">inquiries@dodman.group</a> from the address on your account.
     </p>
 
     <h2>6. Security</h2>
     <ul>
-      <li>API keys are stored as one-way hashes, never in plain text.</li>
+      <li>Passwords and API keys are stored as one-way hashes, never in plain text.</li>
       <li>All traffic to the Service is encrypted in transit (HTTPS).</li>
       <li>Optional password protection lets you lock each generated PDF with that row's own ID.</li>
       <li>Account data is isolated at the database level using Row-Level Security, not just application-level checks.</li>
     </ul>
 
     <h2>7. Contact</h2>
-    <p>Questions or requests about your data: <a href="mailto:hello@dodmangroup.com">hello@dodmangroup.com</a> (update to your real contact address).</p>
+    <p>Questions or requests about your data: <a href="mailto:inquiries@dodman.group">inquiries@dodman.group</a></p>
 
   {% endif %}
 </div>
 
-<footer>&copy; 2026 Statement Generator. All rights reserved. &middot; <a href="/api/terms">Terms</a> &middot; <a href="/api/privacy">Privacy</a></footer>
+<footer>&copy; 2026 Dodman Group. All rights reserved. &middot; <a href="/api/terms">Terms</a> &middot; <a href="/api/privacy">Privacy</a> &middot; <a href="mailto:inquiries@dodman.group">inquiries@dodman.group</a></footer>
 
 </body>
 </html>

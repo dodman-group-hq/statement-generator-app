@@ -19,13 +19,15 @@
   .badge{display:inline-block; padding:2px 8px; border-radius:2px; font-size:11px; text-transform:uppercase;}
   .badge-active{background:#e3ede6; color:var(--good);}
   .badge-inactive{background:#f0ece2; color:var(--ink-soft);}
-  .new-key-box{background:#fbf3e3; border:1.5px solid var(--seal); padding:16px; margin-bottom:24px;}
+  .new-key-box{display:none; background:#fbf3e3; border:1.5px solid var(--seal); padding:16px; margin-bottom:24px;}
   .new-key-box code{display:block; background:#fff; padding:10px; margin:10px 0; word-break:break-all; font-size:13px;}
-  .new-key-box .warn{color:var(--bad); font-size:12px; font-weight:600;}
+  .new-key-box .warn{color:var(--bad); font-size:12px; font-weight:600; margin:0;}
+  .new-key-box .copy-btn{padding:6px 14px; font-size:13px; margin-right:10px;}
   form.inline{display:flex; gap:10px; align-items:flex-end;}
   form.inline label{font-size:12px; color:var(--ink-soft); display:block; margin-bottom:4px;}
   form.inline input{padding:9px 10px; border:1px solid var(--paper-line); border-radius:2px; font-size:14px;}
   .empty{color:var(--ink-soft); font-size:13px; font-style:italic;}
+  #key-error{display:none; background:#f7e6e2; border:1px solid var(--bad); color:var(--bad); padding:10px 12px; font-size:13px; margin-top:12px;}
 </style>
 </head>
 <body>
@@ -40,42 +42,46 @@
     </div>
   </div>
 
-  {% if new_key %}
-  <div class="new-key-box">
-    <strong>New API key created: "{{ new_key_label }}"</strong>
-    <code id="new-key-value">{{ new_key }}</code>
-    <p class="warn">Save this now - it will not be shown again.</p>
+  <!-- Filled in by JavaScript after a key is created. The raw key lives only
+       here, in memory, until the page is closed or refreshed - it is never
+       part of the page HTML the server sends. -->
+  <div class="new-key-box" id="new-key-box">
+    <strong>New API key created: "<span id="new-key-label"></span>"</strong>
+    <code id="new-key-value"></code>
+    <button type="button" class="btn btn-outline copy-btn" id="copy-key-btn">Copy key</button>
+    <span class="warn">Save this now - it will not be shown again.</span>
   </div>
-  {% endif %}
 
   <div class="card">
     <h2>Your API Keys</h2>
-    {% if clients %}
-    <table>
-      <tr><th>Label</th><th>Plan</th><th>Status</th><th>Created</th></tr>
-      {% for c in clients %}
-      <tr>
-        <td>{{ c.label }}</td>
-        <td>{{ c.plan }}</td>
-        <td><span class="badge {{ 'badge-active' if c.is_active else 'badge-inactive' }}">{{ 'active' if c.is_active else 'inactive' }}</span></td>
-        <td>{{ c.created_at.strftime('%d %b %Y') }}</td>
-      </tr>
-      {% endfor %}
+    <p class="empty" id="keys-empty" {% if clients %}style="display:none;"{% endif %}>You don't have any API keys yet - create one below.</p>
+    <table id="keys-table" {% if not clients %}style="display:none;"{% endif %}>
+      <thead>
+        <tr><th>Label</th><th>Plan</th><th>Status</th><th>Created</th></tr>
+      </thead>
+      <tbody id="keys-body">
+        {% for c in clients %}
+        <tr>
+          <td>{{ c.label }}</td>
+          <td>{{ c.plan }}</td>
+          <td><span class="badge {{ 'badge-active' if c.is_active else 'badge-inactive' }}">{{ 'active' if c.is_active else 'inactive' }}</span></td>
+          <td>{{ c.created_at.strftime('%d %b %Y') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
     </table>
-    {% else %}
-    <p class="empty">You don't have any API keys yet - create one below.</p>
-    {% endif %}
   </div>
 
   <div class="card">
     <h2>Create a New Key</h2>
-    <form class="inline" action="/accounts/dashboard/create-key" method="POST">
+    <form class="inline" id="create-key-form">
       <div>
         <label for="label">Label</label>
-        <input type="text" id="label" name="label" placeholder="e.g. Production" required>
+        <input type="text" id="label" name="label" placeholder="e.g. Production" maxlength="100" required>
       </div>
-      <button type="submit" class="btn btn-primary">Create Key</button>
+      <button type="submit" class="btn btn-primary" id="create-key-btn">Create Key</button>
     </form>
+    <div id="key-error"></div>
   </div>
 
   <div class="card">
@@ -84,5 +90,110 @@
       <a href="/api/statement_generator">generator page</a>. See <a href="/docs">API docs</a> for the full reference.</p>
   </div>
 </div>
+
+<script>
+  const form = document.getElementById('create-key-form');
+  const submitBtn = document.getElementById('create-key-btn');
+  const errorBox = document.getElementById('key-error');
+  const keyBox = document.getElementById('new-key-box');
+  const keyValueEl = document.getElementById('new-key-value');
+  const keyLabelEl = document.getElementById('new-key-label');
+  const copyBtn = document.getElementById('copy-key-btn');
+  const table = document.getElementById('keys-table');
+  const tbody = document.getElementById('keys-body');
+  const emptyMsg = document.getElementById('keys-empty');
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.style.display = 'block';
+  }
+
+  function formatDate(iso) {
+    const d = iso ? new Date(iso) : new Date();
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  // Built with textContent / createElement (never innerHTML) so a label like
+  // "<img onerror=...>" can't inject markup into the page.
+  function addKeyRow(data) {
+    const tr = document.createElement('tr');
+
+    const labelTd = document.createElement('td');
+    labelTd.textContent = data.label;
+
+    const planTd = document.createElement('td');
+    planTd.textContent = data.plan;
+
+    const statusTd = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (data.is_active ? 'badge-active' : 'badge-inactive');
+    badge.textContent = data.is_active ? 'active' : 'inactive';
+    statusTd.appendChild(badge);
+
+    const createdTd = document.createElement('td');
+    createdTd.textContent = formatDate(data.created_at);
+
+    tr.append(labelTd, planTd, statusTd, createdTd);
+    tbody.insertBefore(tr, tbody.firstChild);  // newest first, like the server-rendered list
+
+    table.style.display = '';
+    emptyMsg.style.display = 'none';
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorBox.style.display = 'none';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating...';
+
+    try {
+      const resp = await fetch('/accounts/dashboard/create-key', {
+        method: 'POST',
+        body: new FormData(form),
+        credentials: 'same-origin',
+      });
+
+      if (resp.status === 401) {
+        window.location.href = '/accounts/login';
+        return;
+      }
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        showError(data.message || 'Could not create a key. Please try again.');
+        return;
+      }
+
+      keyLabelEl.textContent = data.label;
+      keyValueEl.textContent = data.key;
+      keyBox.style.display = 'block';
+      copyBtn.textContent = 'Copy key';
+      addKeyRow(data);
+      form.reset();
+      keyBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (err) {
+      showError('Network error - please check your connection and try again.');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Key';
+    }
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(keyValueEl.textContent);
+      copyBtn.textContent = 'Copied';
+    } catch (err) {
+      // Clipboard API unavailable (e.g. non-HTTPS) - select the text so the
+      // user can copy it manually instead.
+      const range = document.createRange();
+      range.selectNodeContents(keyValueEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      copyBtn.textContent = 'Press Ctrl+C';
+    }
+  });
+</script>
 </body>
 </html>

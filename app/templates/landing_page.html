@@ -117,10 +117,11 @@
     <p class="lead">Turn a Word template and an Excel spreadsheet into individually personalized, optionally password-protected PDF statements — for every row in your spreadsheet, in one go.</p>
     <img src="{{ url_for('static', filename='img/hero-merge-and-seal.svg') }}" width="800" height="480" alt="A Word template and spreadsheet merging into individually sealed PDF statements" class="hero-image">
     <div class="btn-row">
-      <a href="/accounts/login" class="btn btn-primary">Start generating statements</a>
+      <a href="/accounts/signup" class="btn btn-primary">Create a free account</a>
+      <a href="/accounts/login" class="btn btn-outline">Log in</a>
       <a href="/api/download_examples" class="btn btn-outline">Download example files</a>
     </div>
-    <p class="fine">You'll need an API key to generate statements. Don't have one? Contact us to get set up.</p>
+    <p class="fine">Free accounts have monthly usage limits. Need more volume or password-protected PDFs? Email <a href="mailto:inquiries@dodman.group">inquiries@dodman.group</a>.</p>
   </div>
 </div>
 
@@ -164,11 +165,12 @@
     <div class="step">
       <div class="step-mark seal-mark">03</div>
       <div>
-        <h3>Upload both files with your API key</h3>
+        <h3>Create an account and an API key</h3>
         <p>
-          Head to the <a href="/accounts/login">generator page</a>, enter your API key, upload
-          your template and spreadsheet, and choose whether to password-protect each PDF with that
-          person's own ID.
+          <a href="/accounts/signup">Sign up</a>, then create an API key from your dashboard. The key
+          is shown once, so copy it somewhere safe. Open the
+          <a href="/api/statement_generator">generator page</a>, paste your key, upload your template
+          and spreadsheet, and choose whether to password-protect each PDF with that person's own ID.
         </p>
       </div>
     </div>
@@ -194,17 +196,17 @@
   <div class="wrap">
     <div class="feature-grid">
       <div>
-        <img src="{{ url_for('static', filename='img/feature-easy-to-use.svg') }}" width="110" height="110" alt="Feature 1">
+        <img src="{{ url_for('static', filename='img/feature-easy-to-use.svg') }}" width="110" height="110" alt="Document with a filled-in placeholder">
         <h4>Easy to use</h4>
         <p>Upload your files, and the generator does the merging, conversion, and packaging for you.</p>
       </div>
       <div>
-        <img src="{{ url_for('static', filename='img/feature-secure-by-key.svg') }}" width="110" height="110" alt="Feature 2">
+        <img src="{{ url_for('static', filename='img/feature-secure-by-key.svg') }}" width="110" height="110" alt="Shield with a keyhole">
         <h4>Secure by key</h4>
         <p>Every request requires your own API key, and you can only ever see or download your own jobs.</p>
       </div>
       <div>
-        <img src="{{ url_for('static', filename='img/feature-download-ready.svg') }}" width="110" height="110" alt="Feature 3">
+        <img src="{{ url_for('static', filename='img/feature-download-ready.svg') }}" width="110" height="110" alt="Document dropping into a download tray">
         <h4>Download with ease</h4>
         <p>Receive your files packaged in a convenient zip for easy download.</p>
       </div>
@@ -212,7 +214,7 @@
   </div>
 </div>
 
-<footer>&copy; 2026 Statement Generator. All rights reserved. &middot; <a href="/api/terms">Terms</a> &middot; <a href="/api/privacy">Privacy</a></footer>
+<footer>&copy; 2026 Dodman Group. All rights reserved. &middot; <a href="/api/terms">Terms</a> &middot; <a href="/api/privacy">Privacy</a> &middot; <a href="mailto:inquiries@dodman.group">inquiries@dodman.group</a></footer>
 
 </body>
 </html>

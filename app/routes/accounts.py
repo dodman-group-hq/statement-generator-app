@@ -10,18 +10,26 @@ cross-product SSO later is a config change, not a rewrite.
 """
 import logging
 import os
+import secrets
 
+import asyncpg
 from fastapi import APIRouter, Request, Response, Cookie, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app.accounts import hash_password, verify_password, make_session_token, decode_session_token
-from app.db import create_user, get_user_by_email, get_user_by_id, create_api_client, list_api_clients_for_user
+from app.db import (
+    create_user, get_user_by_email, get_user_by_id,
+    create_api_client, list_api_clients_for_user, plan_defaults,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
 
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"))
+
+MAX_LABEL_LENGTH = 100
+SELF_SERVE_PLAN = "free"
 
 
 async def get_optional_web_user(dodman_session: str | None) -> dict | None:
@@ -78,12 +86,22 @@ async def signup_action(email: str = Form(...), password: str = Form(...)):
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
 
+    duplicate = HTTPException(
+        status_code=409,
+        detail="An account with that email already exists. Try logging in instead.",
+    )
+
     existing = await get_user_by_email(email)
     if existing:
-        raise HTTPException(status_code=409, detail="An account with that email already exists. Try logging in instead.")
+        raise duplicate
 
     try:
         user_id = await create_user(email, hash_password(password))
+    except asyncpg.UniqueViolationError:
+        # Two signups for the same email raced past the check above - the
+        # database's unique constraint is the real guard, so report it as
+        # the duplicate it is rather than as a service outage.
+        raise duplicate
     except Exception as e:
         logger.error(f"Signup failed for {email}: {e}")
         raise HTTPException(status_code=503, detail="Could not create account. Please try again shortly.")
@@ -116,19 +134,45 @@ async def logout_action():
 
 
 @router.post("/dashboard/create-key", include_in_schema=False)
-async def create_key_action(request: Request, label: str = Form(...), dodman_session: str | None = Cookie(default=None)):
+async def create_key_action(label: str = Form(...), dodman_session: str | None = Cookie(default=None)):
+    """Called via fetch() from the dashboard and returns JSON, NOT a rendered
+    page. Previously this re-rendered the whole dashboard from the POST, so
+    refreshing the browser re-submitted the form and silently minted another
+    key. The raw key now exists only in this one response; the page shows it
+    once and a refresh simply reloads the dashboard (GET) without it."""
     user = await get_optional_web_user(dodman_session)
     if not user:
-        return RedirectResponse(url="/accounts/login", status_code=303)
+        raise HTTPException(status_code=401, detail="Your session has expired. Please log in again.")
 
-    label = label.strip() or f"{user['email']}'s key"
-    try:
-        raw_key = await create_api_client(label, plan='free', user_id=user["id"])
-    except Exception as e:
-        logger.error(f"Self-serve key creation failed for user {user['id']}: {e}")
+    label = (label.strip() or f"{user['email']}'s key")[:MAX_LABEL_LENGTH]
+    limits = plan_defaults(SELF_SERVE_PLAN)
+
+    # statement_api_clients.label is UNIQUE across ALL clients, not per user,
+    # so two different users naming a key "Production" would collide. On a
+    # collision, retry once with a short random suffix instead of failing.
+    final_label = label
+    raw_key = None
+    for attempt in range(2):
+        try:
+            raw_key = await create_api_client(final_label, plan=SELF_SERVE_PLAN, user_id=user["id"], **limits)
+            break
+        except asyncpg.UniqueViolationError:
+            final_label = f"{label[:MAX_LABEL_LENGTH - 7]} ({secrets.token_hex(2)})"
+        except Exception as e:
+            logger.error(f"Self-serve key creation failed for user {user['id']}: {e}")
+            raise HTTPException(status_code=503, detail="Could not create a key right now. Please try again shortly.")
+
+    if raw_key is None:
         raise HTTPException(status_code=503, detail="Could not create a key right now. Please try again shortly.")
 
+    # Re-read so the response reflects exactly what was stored (created_at, status).
     clients = await list_api_clients_for_user(user["id"])
-    return templates.TemplateResponse(request, "accounts_dashboard.html", {
-        "user": user, "clients": clients, "new_key": raw_key, "new_key_label": label,
-    })
+    created = next((c for c in clients if c["label"] == final_label), None)
+
+    return JSONResponse({
+        "key": raw_key,
+        "label": final_label,
+        "plan": SELF_SERVE_PLAN,
+        "is_active": True,
+        "created_at": created["created_at"].isoformat() if created else None,
+    }, headers={"Cache-Control": "no-store"})
