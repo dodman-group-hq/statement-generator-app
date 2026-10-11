@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 #     Contents: the raw GitHub fine-grained PAT (read-only, scoped to
 #               just the dodman-billing repo) - no KEY=VALUE, just the token
 RUN --mount=type=secret,id=dodman_billing_pat,dst=/run/secrets/dodman_billing_pat \
-    pip install --prefix=/install --no-cache-dir \
+    pip install --no-cache-dir \
     "git+https://$(cat /run/secrets/dodman_billing_pat)@github.com/dodman-group-hq/dodman-billing.git@main"
 
 # Copy project files to the container
