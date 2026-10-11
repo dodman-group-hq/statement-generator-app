@@ -834,14 +834,14 @@ async def statement_generator_page(request: Request):
 @router.get("/terms", response_class=HTMLResponse, include_in_schema=False)
 async def terms(request: Request):
     return templates.TemplateResponse(request, "legal_page.html", {
-        "page_title": "Terms of Service", "active": "terms", "last_updated": "23 August 2026",
+        "page_title": "Terms of Service", "active": "terms", "last_updated": "10 October 2026",
     })
 
 
 @router.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
 async def privacy(request: Request):
     return templates.TemplateResponse(request, "legal_page.html", {
-        "page_title": "Privacy Policy", "active": "privacy", "last_updated": "23 August 2026",
+        "page_title": "Privacy Policy", "active": "privacy", "last_updated": "10 October 2026",
     })
 
 
