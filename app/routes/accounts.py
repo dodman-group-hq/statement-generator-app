@@ -17,13 +17,20 @@ from fastapi import APIRouter, BackgroundTasks, Request, Response, Cookie, Form,
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from app.accounts import hash_password, verify_password, make_session_token, decode_session_token
+from app.accounts import (
+    hash_password, verify_password, make_session_token, decode_session_token,
+    generate_reset_token, hash_reset_token,
+)
 from app.db import (
     create_user, get_user_by_email, get_user_by_id,
     create_api_client, list_api_clients_for_user, plan_defaults,
     get_active_plan_for_user, describe_plan, plan_label,
+    create_password_reset, password_reset_is_valid, consume_password_reset,
 )
-from app.notifications import notify_welcome, notify_key_created
+from app.notifications import (
+    notify_welcome, notify_key_created, notify_password_reset, notify_password_changed, app_url,
+)
+from app.ratelimit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
@@ -31,6 +38,18 @@ router = APIRouter(tags=["accounts"])
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"))
 
 MAX_LABEL_LENGTH = 100
+MIN_PASSWORD_LENGTH = 8
+
+# Per-IP cap on reset requests. Deliberately generous: behind a proxy that isn't
+# configured to forward client IPs, every visitor shares one address, and a tight
+# limit would then block everyone. The real protection against email flooding is
+# the per-account limit in db.create_password_reset (3 links per hour).
+_forgot_ip_limiter = SlidingWindowLimiter(max_events=30, window_seconds=3600)
+
+FORGOT_PASSWORD_MESSAGE = ("If an account exists for that email, a reset link is on its way. "
+                           "The link expires in 1 hour.")
+INVALID_RESET_MESSAGE = "This reset link is invalid, expired, or has already been used."
+
 
 
 async def get_optional_web_user(dodman_session: str | None) -> dict | None:
@@ -68,6 +87,36 @@ async def login_page(request: Request):
     return templates.TemplateResponse(request, "accounts_login.html")
 
 
+@router.get("/forgot-password", response_class=HTMLResponse, include_in_schema=False)
+async def forgot_password_page(request: Request):
+    return templates.TemplateResponse(request, "accounts_forgot_password.html")
+
+
+@router.get("/reset-password", response_class=HTMLResponse, include_in_schema=False)
+async def reset_password_page(request: Request, token: str | None = None):
+    """Checks the link up front so someone with a dead link is told immediately,
+    rather than after typing a new password. The page is served with
+    Referrer-Policy: no-referrer and no caching, because the secret token is in
+    the URL and must not leak to the third-party font host or into a cache."""
+    error = None
+    if not token:
+        error = "This reset link is missing its token. Please request a new one."
+    else:
+        try:
+            if not await password_reset_is_valid(hash_reset_token(token)):
+                error = INVALID_RESET_MESSAGE
+        except Exception as e:
+            logger.error(f"Could not check reset token: {e}")
+            error = "We couldn't check this link right now. Please try again in a moment."
+
+    resp = templates.TemplateResponse(request, "accounts_reset_password.html", {
+        "token": None if error else token, "error": error,
+    })
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard_page(request: Request, dodman_session: str | None = Cookie(default=None)):
     user = await get_optional_web_user(dodman_session)
@@ -91,7 +140,7 @@ async def dashboard_page(request: Request, dodman_session: str | None = Cookie(d
 async def signup_action(background_tasks: BackgroundTasks, email: str = Form(...), password: str = Form(...)):
     email = email.lower().strip()
     if len(password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
 
     duplicate = HTTPException(
         status_code=409,
@@ -132,6 +181,67 @@ async def login_action(email: str = Form(...), password: str = Form(...)):
     resp = RedirectResponse(url="/accounts/dashboard", status_code=303)
     _set_session_cookie(resp, str(row["id"]))
     return resp
+
+
+@router.post("/forgot-password", include_in_schema=False)
+async def forgot_password_action(request: Request, background_tasks: BackgroundTasks, email: str = Form(...)):
+    """Always answers the same way whether or not the email has an account, so
+    this can't be used to find out who is registered. The email itself is sent in
+    the background so response time doesn't give it away either."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _forgot_ip_limiter.allow(client_ip):
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+
+    email = email.lower().strip()
+    if not email or len(email) > 320 or "@" not in email:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+
+    try:
+        user = await get_user_by_email(email)
+        if user:
+            raw_token, token_hash = generate_reset_token()
+            if await create_password_reset(str(user["id"]), token_hash):
+                link = app_url(f"/accounts/reset-password?token={raw_token}")
+                if link:
+                    background_tasks.add_task(notify_password_reset, user["email"], link)
+                elif os.getenv("APP_ENV", "production") != "production":
+                    logger.info(f"[dev] APP_BASE_URL not set; password reset link for {email}: "
+                                f"/accounts/reset-password?token={raw_token}")
+                else:
+                    logger.error("APP_BASE_URL is not set - cannot build a password reset link, so no email was sent.")
+    except Exception as e:
+        logger.error(f"Password reset request failed: {e}")
+        raise HTTPException(status_code=503, detail="Could not process your request right now. Please try again shortly.")
+
+    return JSONResponse({"message": FORGOT_PASSWORD_MESSAGE})
+
+
+@router.post("/reset-password", include_in_schema=False)
+async def reset_password_action(background_tasks: BackgroundTasks, token: str = Form(...), password: str = Form(...)):
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+
+    invalid = HTTPException(status_code=400, detail=INVALID_RESET_MESSAGE)
+    token_hash = hash_reset_token(token)
+    try:
+        # Cheap check first so junk tokens don't cost a bcrypt hash each.
+        if not await password_reset_is_valid(token_hash):
+            raise invalid
+        user_id = await consume_password_reset(token_hash, hash_password(password))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset failed: {e}")
+        raise HTTPException(status_code=503, detail="Could not reset your password right now. Please try again shortly.")
+
+    if user_id is None:  # lost a race with another submission of the same link
+        raise invalid
+
+    user = await get_user_by_id(user_id)
+    if user:
+        background_tasks.add_task(notify_password_changed, user["email"])
+    logger.info(f"Password reset completed for user {user_id}")
+    return JSONResponse({"message": "Your password has been updated. You can now log in."})
 
 
 @router.post("/logout", include_in_schema=False)

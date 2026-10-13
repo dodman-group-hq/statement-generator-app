@@ -68,4 +68,4 @@ EXPOSE 8000
 # Shell form (not exec-array form) is required here too, specifically so
 # ${PORT:-8000} actually gets expanded - the exec form doesn't invoke a
 # shell and would pass the literal string "$PORT" through unexpanded.
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'

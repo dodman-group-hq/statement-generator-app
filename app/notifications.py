@@ -80,11 +80,20 @@ def get_email_sender() -> EmailSender:
     return _sender
 
 
-def _app_url(path: str) -> str | None:
+def app_url(path: str) -> str | None:
     """Absolute URL for a link in an email, or None if APP_BASE_URL isn't set
-    (a relative link is useless in an inbox, so the button is simply omitted)."""
+    (a relative link is useless in an inbox, so the button is simply omitted).
+
+    This deliberately uses ONLY the configured APP_BASE_URL and never the
+    request's Host header. Building a password-reset link from the Host header
+    lets an attacker send a victim a genuine reset email whose link points at
+    the attacker's domain ("password reset poisoning").
+    """
     base = os.getenv("APP_BASE_URL", "").rstrip("/")
     return f"{base}{path}" if base else None
+
+
+_app_url = app_url  # older internal name
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +178,7 @@ async def notify_welcome(email: str) -> None:
                     "then upload a Word template and a spreadsheet on the generator page.",
                     "You can download a working example template and spreadsheet from the home page.",
                 ],
-                "Go to your dashboard", _app_url("/accounts/dashboard"),
+                "Go to your dashboard", app_url("/accounts/dashboard"),
             ),
         )
     except Exception:
@@ -188,7 +197,7 @@ async def notify_key_created(email: str, key_label: str) -> None:
                     f'A new API key named "{key_label}" was just created on your {PRODUCT_NAME} account.',
                     "If this was you, there's nothing to do.",
                 ],
-                "Review your keys", _app_url("/accounts/dashboard"),
+                "Review your keys", app_url("/accounts/dashboard"),
                 footnote="If you didn't create this key, change your password and email "
                          f"{os.getenv('SUPPORT_EMAIL', 'inquiries@dodman.group')} straight away.",
             ),
@@ -217,7 +226,7 @@ async def notify_job_limit(email: str, kind: str, plan: str, used: int, limit: i
             ]
         await get_email_sender().send(
             email, subject,
-            render_email(heading, paragraphs, "View plans", _app_url("/accounts/dashboard")),
+            render_email(heading, paragraphs, "View plans", app_url("/accounts/dashboard")),
         )
     except Exception:
         logger.exception("notify_job_limit failed")
@@ -238,3 +247,41 @@ async def notify_job_limit_for_client(client: dict, used: int) -> None:
         await notify_job_limit(user["email"], kind, client.get("plan", "free"), used, client["monthly_job_limit"])
     except Exception:
         logger.exception("notify_job_limit_for_client failed")
+
+
+async def notify_password_reset(email: str, reset_url: str) -> None:
+    try:
+        await get_email_sender().send(
+            email,
+            f"Reset your {PRODUCT_NAME} password",
+            render_email(
+                "Reset your password",
+                [
+                    f"We received a request to reset the password for your {PRODUCT_NAME} account.",
+                    "Use the button below to choose a new password. The link works once and expires in 1 hour.",
+                ],
+                "Choose a new password", reset_url,
+                footnote="If you didn't ask for this, you can ignore this email - your password won't change. "
+                         "(This password is shared across Dodman Group products that use the same account.)",
+            ),
+        )
+    except Exception:
+        logger.exception("notify_password_reset failed")
+
+
+async def notify_password_changed(email: str) -> None:
+    """Security notice after a successful reset, so an unexpected change gets noticed."""
+    try:
+        await get_email_sender().send(
+            email,
+            f"Your {PRODUCT_NAME} password was changed",
+            render_email(
+                "Password changed",
+                [f"The password for your {PRODUCT_NAME} account was just changed using a reset link."],
+                "Log in", app_url("/accounts/login"),
+                footnote="If this wasn't you, contact "
+                         f"{os.getenv('SUPPORT_EMAIL', 'inquiries@dodman.group')} immediately.",
+            ),
+        )
+    except Exception:
+        logger.exception("notify_password_changed failed")

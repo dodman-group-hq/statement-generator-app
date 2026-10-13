@@ -199,6 +199,20 @@ async def init_schema() -> None:
         """)
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_client_created ON statement_jobs(client_id, created_at);")
         await _ensure_jobs_rls(conn)
+        # Shared with Vett (same name, same columns), so this is a no-op once
+        # Vett has created it. Only the SHA-256 of a reset token is stored.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON password_resets (user_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pw_reset_expiry ON password_resets (expires_at);")
     logger.info("Database schema is up to date.")
 
 
@@ -352,3 +366,71 @@ async def list_api_clients_for_user(user_id: str) -> list[dict]:
             user_id,
         )
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+#
+# Tokens are random, single-use and expire after 1 hour. Only a SHA-256 hash is
+# stored, so a database leak can't be turned into working reset links.
+# ---------------------------------------------------------------------------
+
+RESET_MAX_REQUESTS_PER_HOUR = 3
+
+
+async def create_password_reset(user_id: str, token_hash: str) -> bool:
+    """Stores a new reset token for the user. Returns False (and stores nothing)
+    if this user has already been issued RESET_MAX_REQUESTS_PER_HOUR links in the
+    last hour - that caps how many emails anyone can make us send to one address.
+
+    Earlier unused links are deliberately left valid. Revoking them on every new
+    request would let a stranger who knows your email invalidate the link you
+    were just sent simply by requesting another. They are all revoked when a
+    password is actually reset (see consume_password_reset).
+    """
+    async with get_connection() as conn:
+        recent = await conn.fetchval(
+            "SELECT COUNT(*) FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'",
+            user_id,
+        )
+        if recent >= RESET_MAX_REQUESTS_PER_HOUR:
+            return False
+        await conn.execute(
+            "INSERT INTO password_resets (user_id, token_hash, expires_at) "
+            "VALUES ($1, $2, now() + interval '1 hour')",
+            user_id, token_hash,
+        )
+        # Housekeeping, piggybacked on a write we're already doing.
+        await conn.execute("DELETE FROM password_resets WHERE expires_at < now() - interval '7 days'")
+    return True
+
+
+async def password_reset_is_valid(token_hash: str) -> bool:
+    async with get_connection() as conn:
+        return bool(await conn.fetchval(
+            "SELECT 1 FROM password_resets WHERE token_hash = $1 AND used = FALSE AND expires_at > now()",
+            token_hash,
+        ))
+
+
+async def consume_password_reset(token_hash: str, new_password_hash: str) -> str | None:
+    """Atomically claims a reset token and sets the new password. Returns the
+    user's id, or None if the token is unknown, expired or already used.
+
+    Claiming and the password change happen in ONE transaction. The claim is a
+    single UPDATE ... WHERE used = FALSE, so two simultaneous submissions of the
+    same link can't both succeed: the second waits on the row lock, re-checks the
+    condition, and gets nothing. Every other outstanding link for the user is
+    revoked too, since the password they were meant to recover just changed.
+    """
+    async with get_connection() as conn:
+        row = await conn.fetchrow(
+            "UPDATE password_resets SET used = TRUE "
+            "WHERE token_hash = $1 AND used = FALSE AND expires_at > now() RETURNING user_id",
+            token_hash,
+        )
+        if row is None:
+            return None
+        await conn.execute("UPDATE users SET password_hash = $1 WHERE id = $2", new_password_hash, row["user_id"])
+        await conn.execute("UPDATE password_resets SET used = TRUE WHERE user_id = $1 AND used = FALSE", row["user_id"])
+        return str(row["user_id"])
