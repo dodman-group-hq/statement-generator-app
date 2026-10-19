@@ -12,7 +12,7 @@ from docx import Document
 from app.accounts import (
     hash_password, verify_password, make_session_token, decode_session_token,
 )
-from app.db import plan_defaults, hash_key
+from app.db import plan_defaults, describe_plan, plan_label, hash_key
 from app.routes.generate_statements import StatementGenerator, _safe_join, _client_root
 
 
@@ -60,13 +60,33 @@ def test_free_plan_defaults():
     }
 
 
+def test_paid_plans_allow_password_protection_and_rank_by_limits():
+    starter, pro = plan_defaults("starter"), plan_defaults("pro")
+    assert starter["password_protection_allowed"] and pro["password_protection_allowed"]
+    # pro must never be MORE restricted than starter (None means unlimited)
+    assert pro["monthly_job_limit"] is None
+    assert starter["monthly_job_limit"] is not None
+    assert starter["monthly_job_limit"] > plan_defaults("free")["monthly_job_limit"]
+
+
 @pytest.mark.parametrize("plan", ["paid", "internal", "anything-else"])
-def test_non_free_plans_are_unlimited_with_protection(plan):
+def test_custom_plans_are_unlimited_with_protection(plan):
     assert plan_defaults(plan) == {
         "monthly_job_limit": None,
         "max_rows_per_job": None,
         "password_protection_allowed": True,
     }
+
+
+def test_describe_plan_matches_the_limits_it_describes():
+    assert "5 jobs a month" in describe_plan("free")
+    assert "no password protection" in describe_plan("free")
+    assert "Unlimited jobs" in describe_plan("pro")
+
+
+def test_plan_label():
+    assert plan_label("starter") == "Starter"
+    assert plan_label("custom") == "Custom"
 
 
 def test_plan_defaults_returns_a_copy():

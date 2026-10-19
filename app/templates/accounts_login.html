@@ -16,6 +16,8 @@
   input{width:100%; padding:10px 12px; margin-bottom:16px; border:1px solid var(--paper-line); border-radius:2px; font-size:15px; background:#fff;}
   .btn-primary{width:100%; text-align:center;}
   .alt-link{text-align:center; margin-top:16px; font-size:13px;}
+  .label-row{display:flex; justify-content:space-between; align-items:baseline;}
+  .label-row a{font-size:12px;}
   #form-error{display:none; background:#f7e6e2; border:1px solid var(--bad); color:var(--bad); padding:10px 12px; font-size:13px; margin-bottom:16px;}
 </style>
 </head>
@@ -26,9 +28,12 @@
     <div id="form-error"></div>
     <form id="login-form">
       <label for="email">Email</label>
-      <input type="email" id="email" name="email" required>
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" required>
+      <input type="email" id="email" name="email" autocomplete="email" required>
+      <div class="label-row">
+        <label for="password">Password</label>
+        <a href="/accounts/forgot-password">Forgot password?</a>
+      </div>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
       <button type="submit" class="btn btn-primary">Log In</button>
     </form>
     <p class="alt-link">Don't have an account? <a href="/accounts/signup">Sign up</a></p>

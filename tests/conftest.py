@@ -22,3 +22,12 @@ os.environ["APP_ENV"] = "development"
 os.environ["SESSION_SECRET_KEY"] = "test-secret-key-not-for-production"
 os.environ["DATABASE_URL"] = ""
 os.environ["SENTRY_DSN"] = ""
+
+
+import pytest
+
+
+@pytest.fixture
+def anyio_backend():
+    # Run the async tests on asyncio only (the app uses asyncio, not trio).
+    return "asyncio"

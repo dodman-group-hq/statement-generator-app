@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     gcc \
     libpq-dev \
+    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +36,20 @@ WORKDIR /app
 # and force a full pip reinstall on every rebuild.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Internal shared billing package - private repo, installed via a Render
+# Secret File (not an ARG/ENV) so the token never lands in an image layer.
+# BuildKit's --mount=type=secret only exists for the duration of this one
+# RUN instruction; `docker history` on the built image shows nothing.
+#
+# Setup required in the Render dashboard (one-time, per environment):
+#   Service -> Environment -> Secret Files -> Add Secret File
+#     Filename: dodman_billing_pat
+#     Contents: the raw GitHub fine-grained PAT (read-only, scoped to
+#               just the dodman-billing repo) - no KEY=VALUE, just the token
+RUN --mount=type=secret,id=dodman_billing_pat,dst=/run/secrets/dodman_billing_pat \
+    pip install --no-cache-dir \
+    "git+https://$(cat /run/secrets/dodman_billing_pat)@github.com/dodman-group-hq/dodman-billing.git@main"
 
 # Copy project files to the container
 COPY . .
@@ -53,4 +68,4 @@ EXPOSE 8000
 # Shell form (not exec-array form) is required here too, specifically so
 # ${PORT:-8000} actually gets expanded - the exec form doesn't invoke a
 # shell and would pass the literal string "$PORT" through unexpanded.
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --proxy-headers --forwarded-allow-ips='*'

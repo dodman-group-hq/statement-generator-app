@@ -28,6 +28,21 @@
   form.inline input{padding:9px 10px; border:1px solid var(--paper-line); border-radius:2px; font-size:14px;}
   .empty{color:var(--ink-soft); font-size:13px; font-style:italic;}
   #key-error{display:none; background:#f7e6e2; border:1px solid var(--bad); color:var(--bad); padding:10px 12px; font-size:13px; margin-top:12px;}
+  #billing-card{display:none;}
+  #billing-banner{display:none; padding:10px 12px; font-size:13px; margin-bottom:16px; border:1px solid;}
+  #billing-banner.ok{background:#e3ede6; border-color:var(--good); color:var(--good);}
+  #billing-banner.bad{background:#f7e6e2; border-color:var(--bad); color:var(--bad);}
+  .billing-status{display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;}
+  .billing-status .plan-name{font-size:18px; font-family:"Fraunces", Georgia, serif; font-weight:600;}
+  .billing-status .plan-detail{font-size:13px; color:var(--ink-soft); margin-top:2px;}
+  .btn-sm{padding:8px 18px; font-size:14px;}
+  #billing-plans{display:flex; gap:14px; flex-wrap:wrap; margin-top:18px;}
+  .plan-option{flex:1 1 220px; border:1px solid var(--paper-line); background:#fff; padding:14px 16px;}
+  .plan-option .po-name{font-family:"Fraunces", Georgia, serif; font-weight:600; font-size:16px;}
+  .plan-option .po-sum{font-size:12.5px; color:var(--ink-soft); margin:4px 0 12px; line-height:1.5;}
+  .plan-option.current{border-color:var(--seal);}
+  .invoice-list{margin-top:18px;}
+  .invoice-list h3{font-size:13px; margin:0 0 6px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.03em;}
 </style>
 </head>
 <body>
@@ -82,6 +97,23 @@
       <button type="submit" class="btn btn-primary" id="create-key-btn">Create Key</button>
     </form>
     <div id="key-error"></div>
+  </div>
+
+  <div class="card" id="billing-card">
+    <h2>Plan &amp; Billing</h2>
+    <div id="billing-banner"></div>
+    <div class="billing-status">
+      <div>
+        <div class="plan-name" id="billing-plan-name">Free plan</div>
+        <div class="plan-detail" id="billing-plan-detail"></div>
+      </div>
+      <div id="billing-actions"></div>
+    </div>
+    <div id="billing-plans"></div>
+    <div class="invoice-list" id="invoice-list" style="display:none;">
+      <h3>Invoices</h3>
+      <table><tbody id="invoice-body"></tbody></table>
+    </div>
   </div>
 
   <div class="card">
@@ -194,6 +226,193 @@
       copyBtn.textContent = 'Press Ctrl+C';
     }
   });
+</script>
+<script>
+  // ---- Plan & billing -----------------------------------------------------
+  // The card stays hidden unless /billing/portal answers, so the dashboard
+  // works unchanged on an install where billing isn't configured.
+  // PLANS and FREE_SUMMARY come from the server (app/db.py), so the limits
+  // shown here are the limits that are actually enforced.
+  (function () {
+    const PLANS = {{ plans|tojson }};
+    const FREE_SUMMARY = {{ free_summary|tojson }};
+    const RANK = { free: 0, starter: 1, pro: 2 };
+
+    const card = document.getElementById('billing-card');
+    const banner = document.getElementById('billing-banner');
+    const nameEl = document.getElementById('billing-plan-name');
+    const detailEl = document.getElementById('billing-plan-detail');
+    const actionsEl = document.getElementById('billing-actions');
+    const plansEl = document.getElementById('billing-plans');
+    const invoiceBox = document.getElementById('invoice-list');
+    const invoiceBody = document.getElementById('invoice-body');
+
+    const labelOf = (key) => (PLANS.find((p) => p.key === key) || {}).label || key;
+
+    function say(text, kind) {
+      banner.textContent = text;
+      banner.className = kind;
+      banner.style.display = 'block';
+    }
+
+    function fmtDate(iso) {
+      return iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+    }
+
+    function button(label, cls, onClick) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn ' + cls + ' btn-sm';
+      b.textContent = label;
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await onClick(); } finally { b.disabled = false; }
+      });
+      return b;
+    }
+
+    async function api(path, options) {
+      const resp = await fetch(path, Object.assign({ credentials: 'same-origin' }, options || {}));
+      if (resp.status === 401) { window.location.href = '/accounts/login'; throw new Error('auth'); }
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        const d = data.message ? data : (data.detail || data);
+        throw new Error(d.message || 'Something went wrong. Please try again.');
+      }
+      return data;
+    }
+
+    const post = (path, body) => api(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    async function subscribe(plan) {
+      try {
+        const data = await post('/billing/subscribe', { plan });
+        window.location.href = data.authorization_url;  // Paystack's hosted checkout
+      } catch (e) { if (e.message !== 'auth') say(e.message, 'bad'); }
+    }
+
+    async function changePlan(plan, verb) {
+      if (!confirm(verb + ' to the ' + labelOf(plan) + ' plan?')) return;
+      try {
+        const data = await post('/billing/change-plan', { plan });
+        if (data.status === 'checkout_required') { window.location.href = data.authorization_url; return; }
+        say(data.message || 'Plan updated.', 'ok');
+        load();
+      } catch (e) { if (e.message !== 'auth') say(e.message, 'bad'); }
+    }
+
+    async function cancel() {
+      if (!confirm('Turn off auto-renewal? You keep your plan until the end of the current period.')) return;
+      try {
+        const data = await post('/billing/cancel');
+        say(data.message || 'Auto-renewal turned off.', 'ok');
+        load();
+      } catch (e) { if (e.message !== 'auth') say(e.message, 'bad'); }
+    }
+
+    function planOption(plan, current, action) {
+      const box = document.createElement('div');
+      box.className = 'plan-option' + (current ? ' current' : '');
+      const name = document.createElement('div'); name.className = 'po-name'; name.textContent = plan.label;
+      const sum = document.createElement('div'); sum.className = 'po-sum'; sum.textContent = plan.summary;
+      box.append(name, sum);
+      if (current) {
+        const tag = document.createElement('div'); tag.className = 'po-sum'; tag.textContent = 'Your current plan';
+        box.append(tag);
+      } else if (action) {
+        box.append(action);
+      }
+      return box;
+    }
+
+    function render(p) {
+      actionsEl.replaceChildren();
+      plansEl.replaceChildren();
+      const status = p.sub_status;
+      const plan = p.sub_plan;
+      const end = fmtDate(p.sub_period_end);
+      const paid = status === 'active' || status === 'non-renewing' || status === 'attention';
+
+      if (!paid) {
+        nameEl.textContent = 'Free plan';
+        detailEl.textContent = FREE_SUMMARY + (status === 'cancelled' ? ' - your subscription has ended.' : '');
+        PLANS.forEach((pl) => plansEl.append(
+          planOption(pl, false, button('Choose ' + pl.label, 'btn-primary', () => subscribe(pl.key)))));
+        return;
+      }
+
+      nameEl.textContent = labelOf(plan) + ' plan';
+      if (status === 'attention') {
+        detailEl.textContent = 'Your last payment failed. Please contact us if this continues.';
+      } else if (status === 'non-renewing') {
+        detailEl.textContent = (end ? 'Ends on ' + end : 'Will not renew') + ' - auto-renewal is off';
+      } else {
+        detailEl.textContent = end ? 'Renews on ' + end : 'Active';
+      }
+
+      if (status === 'active') actionsEl.append(button('Cancel subscription', 'btn-outline', cancel));
+
+      if (p.pending_plan) {
+        detailEl.textContent += ' - switching to ' + labelOf(p.pending_plan) + (p.pending_change_at ? ' on ' + fmtDate(p.pending_change_at) : '');
+        plansEl.append(planOption({ label: 'Stay on ' + labelOf(plan), summary: 'Cancel the scheduled switch.' }, false,
+          button('Stay on ' + labelOf(plan), 'btn-outline', () => changePlan(plan, 'Stay'))));
+      } else if (status === 'active') {
+        PLANS.filter((pl) => pl.key !== plan).forEach((pl) => {
+          const up = (RANK[pl.key] || 0) > (RANK[plan] || 0);
+          plansEl.append(planOption(pl, false,
+            button(up ? 'Upgrade to ' + pl.label : 'Switch to ' + pl.label, up ? 'btn-primary' : 'btn-outline',
+              () => changePlan(pl.key, up ? 'Upgrade' : 'Switch'))));
+        });
+      }
+    }
+
+    async function loadInvoices() {
+      try {
+        const data = await api('/billing/invoices');
+        if (!data.invoices || !data.invoices.length) return;
+        invoiceBody.replaceChildren();
+        data.invoices.forEach((inv) => {
+          const tr = document.createElement('tr');
+          [fmtDate(inv.paid_at), inv.amount_display].forEach((text) => {
+            const td = document.createElement('td'); td.textContent = text; tr.appendChild(td);
+          });
+          const linkTd = document.createElement('td');
+          const a = document.createElement('a');
+          a.href = inv.download_url;
+          a.textContent = 'Download';
+          linkTd.appendChild(a);
+          tr.appendChild(linkTd);
+          invoiceBody.appendChild(tr);
+        });
+        invoiceBox.style.display = 'block';
+      } catch (e) { /* invoices are a nicety; never block the card on them */ }
+    }
+
+    async function load() {
+      try {
+        render(await api('/billing/portal'));
+        card.style.display = 'block';
+        loadInvoices();
+      } catch (e) { /* billing not available - leave the card hidden */ }
+    }
+
+    // Message after returning from Paystack's checkout (see the callback redirect).
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing') === 'success') {
+      say('Payment received - your plan is active.', 'ok');
+    } else if (params.get('status')) {
+      say('Your payment was not completed (' + (params.get('reason') || params.get('status')) + ').', 'bad');
+    }
+    if (params.has('billing') || params.has('status')) {
+      history.replaceState(null, '', window.location.pathname);  // so a refresh doesn't repeat the message
+    }
+
+    load();
+  })();
 </script>
 </body>
 </html>

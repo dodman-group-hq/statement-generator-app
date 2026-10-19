@@ -26,6 +26,7 @@ each set_cookie call, not a rearchitecture.
 """
 import os
 import hmac
+import hashlib
 import secrets
 import logging
 
@@ -111,3 +112,19 @@ def decode_session_token(token: str) -> str | None:
         return user_id
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Password-reset tokens
+# ---------------------------------------------------------------------------
+
+def generate_reset_token() -> tuple[str, str]:
+    """Returns (raw_token, token_hash). The raw token goes in the emailed link and
+    is never stored; only the hash is saved, so a database leak can't be used to
+    reset anyone's password."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_reset_token(raw)
+
+
+def hash_reset_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
